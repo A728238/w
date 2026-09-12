@@ -67,10 +67,10 @@
                 const exeUint8Array = new Uint8Array(evt.target.result);
                 console.log("ユーザーバイナリのメモリロード成功");
 
-                // 4. Boxedwine の環境変数を定義
+                // 4. 【決定打】Boxedwine / Emscripten固有の通信・ファイル関数群を直接ジャック
                 window.Module = {
                     canvas: document.getElementById('canvas'),
-                    arguments: ['/home/wineuser/app.exe'], // 実行対象を指定
+                    arguments: ['/home/wineuser/app.exe'],
                     locateFile: function(filePath) {
                         return baseUrl + targetDir + "/" + filePath;
                     },
@@ -85,6 +85,27 @@
                             }
                         }
                     }],
+                    
+                    // 【大注目】Emscriptenが内部でバイナリを非同期読込する関数を直接オーバーライド
+                    // 外部通信を発生させず、先読みしたzipArrayBufferの複製をそのままWasmのロードスロットへ直撃させます
+                    readAsync: function(url, onload, onerror) {
+                        if (url.includes("boxedwine.zip")) {
+                            console.log("★ジャック成功: Module.readAsync要求に直接メモリからデータを返却します");
+                            // データの破損を防ぐため、ArrayBufferの複製を渡す
+                            const bufferCopy = zipArrayBuffer.slice(0);
+                            setTimeout(() => { onload(bufferCopy); }, 1);
+                            return;
+                        }
+                        // zip以外は通常の取得（MIME対応）
+                        fetch(url).then(res => res.arrayBuffer()).then(onload).catch(onerror);
+                    },
+
+                    // ファイルシステムパッケージ（.data/.zip等）の自動取得関数も同時にジャック
+                    getPreloadedPackage: function(remotePackageName, remotePackageSize) {
+                        console.log("★ジャック成功: Module.getPreloadedPackage要求を補足");
+                        return zipArrayBuffer.slice(0);
+                    },
+
                     onRuntimeInitialized: function() {
                         document.getElementById('status').innerText = "アプリケーションが正常に起動しました！";
                     },
@@ -92,46 +113,7 @@
                     printErr: console.error
                 };
 
-                // 5. 【大ブレイクスルー】ブラウザのすべての通信網（fetch と XMLHttpRequest）を完全に同時ジャック
-                // ① fetch() のジャック
-                const originalFetch = window.fetch;
-                window.fetch = async function(input, init) {
-                    const url = typeof input === 'string' ? input : input.url;
-                    if (url && url.includes("boxedwine.zip")) {
-                        console.log("ジャック成功: fetch() 要求に直接メモリからデータを返却します");
-                        return new Response(zipArrayBuffer, {
-                            status: 200,
-                            statusText: "OK",
-                            headers: { 'Content-Type': 'application/zip' }
-                        });
-                    }
-                    return originalFetch.apply(this, arguments);
-                };
-
-                // ② XMLHttpRequest のジャック
-                const originalXHR = window.XMLHttpRequest;
-                window.XMLHttpRequest = function() {
-                    const xhr = new originalXHR();
-                    const originalOpen = xhr.open;
-                    xhr.open = function(method, url) {
-                        if (url && url.includes("boxedwine.zip")) {
-                            console.log("ジャック成功: XMLHttpRequest 要求に直接メモリからデータを返却します");
-                            Object.defineProperty(xhr, 'response', { writable: true, value: zipArrayBuffer });
-                            Object.defineProperty(xhr, 'status', { writable: true, value: 200 });
-                            Object.defineProperty(xhr, 'readyState', { writable: true, value: 4 });
-                            setTimeout(() => {
-                                if (xhr.onload) xhr.onload();
-                                if (xhr.onreadystatechange) xhr.onreadystatechange();
-                            }, 1);
-                            xhr.send = function() {};
-                            return;
-                        }
-                        return originalOpen.apply(xhr, arguments);
-                    };
-                    return xhr;
-                };
-
-                // 6. コアJSをロード
+                // 5. Wasmシステム内部のダウンロードトリガーを完全に掌握したので、満を持してコアJSをロード！
                 document.getElementById('status').innerText = "Wasmカーネルをキック中（爆速ネイティブ実行）...";
                 const script = document.createElement('script');
                 script.src = baseUrl + targetDir + "/boxedwine.js";
