@@ -35,14 +35,31 @@
         </body>
     `;
 
-    // 2. 公式リポジトリの SingleThreaded/boxedwine.zip を「生のまま」メモリに先行ロード
+    // 2. 35.5MBの純正OSデータをキャッシュを完全に破壊しながらロード
     let rawZipBuffer = null;
-    try {
-        const response = await fetch(baseUrl + targetDir + "/boxedwine.zip");
-        rawZipBuffer = await response.arrayBuffer();
-        console.log("公式OSバイナリデータの先行フェッチに成功しました");
-    } catch (e) {
-        console.error("OSベースデータの読み込み失敗:", e);
+    // 大文字・小文字、およびJekyllの制限を回避するためのURL候補リストを順に試行
+    const urlCandidates = [
+        baseUrl + targetDir + "/boxedwine.zip?v=" + Date.now(),
+        baseUrl + targetDir.toLowerCase() + "/boxedwine.zip",
+        baseUrl + targetDir + "/Boxedwine.zip"
+    ];
+
+    for (const url of urlCandidates) {
+        try {
+            const response = await fetch(url);
+            if (response.ok) {
+                rawZipBuffer = await response.arrayBuffer();
+                console.log("公式OSバイナリデータのフェッチに成功: " + url);
+                break;
+            }
+        } catch (e) {
+            console.warn("URL試行失敗: " + url);
+        }
+    }
+
+    if (!rawZipBuffer) {
+        document.getElementById('status').innerText = "エラー: 35.5MBのboxedwine.zipが見つかりません。リポジトリの配置を確認してください。";
+        return;
     }
 
     // 3. ドラッグ＆ドロップイベント
@@ -67,7 +84,7 @@
                 const exeUint8Array = new Uint8Array(evt.target.result);
                 console.log("ユーザーバイナリのメモリロード成功");
 
-                // 4. Boxedwine / Emscriptenに完全準拠したオブジェクト定義
+                // 4. Boxedwineに完全準拠したオブジェクト定義
                 window.Module = {
                     canvas: document.getElementById('canvas'),
                     arguments: ['/home/wineuser/app.exe'],
@@ -86,8 +103,7 @@
                         }
                     }],
                     
-                    // 【大ブレイクスルー】Emscriptenが内部で自動実行するファイルパッケージ（.data仕様のzip）の
-                    // 取得処理を直接ジャック。公式から取得した生のArrayBufferをそのままWasmのメモリ領域へダイレクト注入します
+                    // Emscriptenコアのデータインジェクションハンドラ
                     getPreloadedPackage: function(remotePackageName, remotePackageSize) {
                         console.log("★Emscriptenコアへ公式OSバイナリデータを注入します");
                         return rawZipBuffer;
@@ -100,7 +116,7 @@
                     printErr: console.error
                 };
 
-                // 5. コアJS（手元の未加工のboxedwine.js）をロード
+                // 5. コアJSをロード
                 document.getElementById('status').innerText = "Wasmカーネルをキック中（爆速ネイティブ実行）...";
                 const script = document.createElement('script');
                 script.src = baseUrl + targetDir + "/boxedwine.js";
