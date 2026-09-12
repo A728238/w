@@ -40,8 +40,8 @@
     try {
         console.log("分割されたOSバイナリデータの並列ダウンロードを開始...");
         const [resA, resB] = await Promise.all([
-            fetch(baseUrl + targetDir + "boxedwine.part_a?v=" + Date.now()),
-            fetch(baseUrl + targetDir + "boxedwine.part_b?v=" + Date.now())
+            fetch(baseUrl + "boxedwine.part_a?v=" + Date.now()),
+            fetch(baseUrl + "boxedwine.part_b?v=" + Date.now())
         ]);
 
         if (resA.ok && resB.ok) {
