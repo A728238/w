@@ -1,31 +1,24 @@
-// boot.js - マルチスレッド強制突破 ＆ 元サイトCSS完全破棄版
+// boot.js - 無限ループを完全に排除した安全・軽量起動版
 (async () => {
     console.log("Web EXE ランナーをローカル展開中（即時自動起動）...");
     
-    // 1. URL文字列の結合
+    // 1. URL文字列の結合（AIバグ防止）
     const protocol = "https:";
     const domain = "a728238.github.io";
     const path = "w";
     const baseUrl = protocol + "//" + domain + "/" + path + "/";
     
-    const cpuCores = navigator.hardwareConcurrency || 1;
-    let targetDir = "SingleThreaded";
-    let modeText = "シングルスレッドモード";
+    // 【大修正】クラッシュを100%防ぐため、危険なWorker拡張を廃止し、SingleThreadedに固定
+    const targetDir = "SingleThreaded";
+    const modeText = "シングルスレッド（安全・軽量・クラッシュレスモード）";
 
-    // 4コア以上ならマルチスレッドを強制発動
-    if (cpuCores >= 4) {
-        targetDir = "MultiThreaded";
-        modeText = `マルチスレッド爆速モード (${cpuCores}コア検知)`;
-    }
-
-    // 2. 元サイトのCSS汚染やdocument.writeのブロックを完全に回避してリセット
+    // 2. document.writeを使わず、元サイトのCSS汚染を完全にクリアして画面を上書き
     document.documentElement.innerHTML = `
         <head>
             <meta charset="UTF-8">
             <title>Web EXE Runner (Native Boot)</title>
             <link rel="stylesheet" href="${baseUrl}${targetDir}/boxedwine.css">
             <style>
-                /* スタイルを完全隔離（他サイトのCSSの影響をリセット） */
                 html, body { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #f0f2f5 !important; font-family: sans-serif !important; }
                 body { display: flex; flex-direction: column; align-items: center; padding: 20px; box-sizing: border-box; }
                 h1 { color: #333; margin-top: 10px; }
@@ -45,18 +38,33 @@
         </body>
     `;
 
-    // 3. Boxedwine のグローバル設定（安全な直接書き込み方式）
+    // 3. 起動用環境データ（boxedwine.zip）を、エラーが出る関数の代わりに標準のfetchでメモリに先読み
+    let zipData = null;
+    try {
+        const response = await fetch(baseUrl + targetDir + "/boxedwine.zip");
+        const arrayBuffer = await response.arrayBuffer();
+        zipData = new Uint8Array(arrayBuffer);
+        console.log("OSベースデータの読み込み完了");
+    } catch (e) {
+        console.error("OSベースデータの読み込みに失敗しました:", e);
+    }
+
+    // 4. Boxedwine のグローバル設定（安全な直接書き込み方式）
     window.Module = {
         canvas: document.getElementById('canvas'),
         arguments: ['/home/wineuser/app.exe'],
         locateFile: function(filePath) {
             return baseUrl + targetDir + "/" + filePath;
         },
-        // クラッシュの原因だった FS_createPreloadedFile を排除し、安全に仮想FSへ配置
+        // エクスポートされていない関数を回避し、標準のFS.writeFileで確実にマウント
         preRun: [function() {
-            if (typeof FS !== 'undefined' && window.boxedwineZipData) {
-                FS.writeFile('boxedwine.zip', window.boxedwineZipData);
-                console.log("Windows OS環境データのインジェクション完了");
+            if (typeof FS !== 'undefined' && zipData) {
+                try {
+                    FS.writeFile('boxedwine.zip', zipData);
+                    console.log("仮想ファイルシステムへ環境をインジェクションしました");
+                } catch(e) {
+                    console.error("FSへの書き込みエラー:", e);
+                }
             }
         }],
         onRuntimeInitialized: function() {
@@ -66,36 +74,14 @@
         printErr: console.error
     };
 
-    // 4. エラーの原因となるクロスオリジン制約をインラインWorker化で完全破壊
-    // (自動的にWorker生成関数を書き換え)
-    const originalWorker = window.Worker;
-    window.Worker = function(stringUrl) {
-        if (stringUrl.startsWith(baseUrl)) {
-            // 外部JSをBlobに変形させてブラウザ内部オリジンとして偽装起動
-            const blobCode = `importScripts("${stringUrl}");`;
-            const blob = new Blob([blobCode], { type: "application/javascript" });
-            return new originalWorker(URL.createObjectURL(blob));
-        }
-        return new originalWorker(stringUrl);
-    };
-
-    // 5. 事前にバックグラウンドで純粋な「boxedwine.zip」をフェッチしてメモリに蓄積
-    try {
-        const response = await fetch(baseUrl + targetDir + "/boxedwine.zip");
-        const arrayBuffer = await response.arrayBuffer();
-        window.boxedwineZipData = new Uint8Array(arrayBuffer);
-    } catch (e) {
-        console.error("OS環境データの読み込みに失敗しました:", e);
-    }
-
-    // 6. ドラッグ＆ドロップイベントの実装
+    // 5. ドラッグ＆ドロップイベントの実装
     const dropZone = document.getElementById('drop-zone');
     dropZone.addEventListener('dragover', (e) => e.preventDefault());
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         const files = e.dataTransfer.files;
         if (files.length > 0) {
-            const file = files[0];
+            const file = files[0]; // インデックスを明示的に指定
             if (!file.name.endsWith('.exe')) {
                 alert('Windowsの実行ファイル (.exe) を選択してください。');
                 return;
@@ -123,7 +109,7 @@
         }
     });
 
-    // 7. コアJSをロード
+    // 6. コアJSをロード（安全なシングルスレッド版）
     const script = document.createElement('script');
     script.src = baseUrl + targetDir + "/boxedwine.js";
     script.async = true;
