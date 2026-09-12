@@ -1,17 +1,16 @@
-// boot.js - 非公開関数エラーを完全回避するジャストインタイムロード版
 (async () => {
-    console.log("Web EXE ランナーをローカル展開中（即時自動起動）...");
+    console.log("Web EXE ランナーをローカル展開中（最終決定版）...");
     
-    // 1. URL文字列の結合（AIバグ防止）
+    // 1. URL文字列の結合（AIによるURL自動書き換えバグを完全に防止）
     const protocol = "https:";
     const domain = "a728238.github.io";
     const path = "w";
     const baseUrl = protocol + "//" + domain + "/" + path + "/";
     
     const targetDir = "SingleThreaded";
-    const modeText = "シングルスレッド（安全・軽量・クラッシュレスモード）";
+    const modeText = "シングルスレッド（安全・完全自己完結モード）";
 
-    // 2. 元サイトのCSSを完全に遮断して画面をUIリセット
+    // 2. 元サイトのCSSを完全に遮断し、画面をクリーンなUIにリセット
     document.documentElement.innerHTML = `
         <head>
             <meta charset="UTF-8">
@@ -37,18 +36,7 @@
         </body>
     `;
 
-    // 3. 起動用OS環境データ（boxedwine.zip）をあらかじめ超高速でバックグラウンドフェッチ
-    let zipData = null;
-    try {
-        const response = await fetch(baseUrl + targetDir + "/boxedwine.zip");
-        const arrayBuffer = await response.arrayBuffer();
-        zipData = new Uint8Array(arrayBuffer);
-        console.log("OSベースデータの読み込み完了");
-    } catch (e) {
-        console.error("OSベースデータの読み込みに失敗しました:", e);
-    }
-
-    // 4. ドラッグ＆ドロップイベントの実装（ファイルが置かれた瞬間に初めてWasmのロードを開始）
+    // 3. ドラッグ＆ドロップイベントの実装（ファイルが置かれた瞬間に初めてWasmのロードを開始）
     const dropZone = document.getElementById('drop-zone');
     dropZone.addEventListener('dragover', (e) => e.preventDefault());
     dropZone.addEventListener('drop', (e) => {
@@ -61,7 +49,7 @@
                 return;
             }
 
-            document.getElementById('status').innerText = `${file.name} をシステムへインジェクション中...`;
+            document.getElementById('status').innerText = `${file.name} をシステムへマウント中...`;
             dropZone.style.display = 'none';
             document.getElementById('canvas-container').style.display = 'block';
 
@@ -70,23 +58,18 @@
                 const exeUint8Array = new Uint8Array(evt.target.result);
                 console.log("ユーザーバイナリのメモリロード成功");
 
-                // 5. 【大修正】ファイルが揃ったので、ここで初めてBoxedwineの環境変数を定義（noInitialRunは使わない）
+                // 4. ファイルが揃ったので、Boxedwineの環境変数を定義
                 window.Module = {
                     canvas: document.getElementById('canvas'),
-                    arguments: ['/home/wineuser/app.exe'], // 実行対象をあらかじめセット
+                    arguments: ['/home/wineuser/app.exe'], // 実行対象を指定
                     locateFile: function(filePath) {
                         return baseUrl + targetDir + "/" + filePath;
                     },
-                    // Wasm起動直前のフックで、用意した2つのデータを仮想FSへ一気に叩き込む
+                    // Wasm起動直前のフックで、ユーザーの.exeのみを直接マウント
                     preRun: [function() {
                         if (typeof FS !== 'undefined') {
                             try {
-                                // 1. ベースのWindows環境をインジェクション
-                                if (zipData) {
-                                    FS.writeFile('boxedwine.zip', zipData);
-                                    console.log("仮想ファイルシステムへ環境をインジェクションしました");
-                                }
-                                // 2. ユーザーの.exeをインジェクション
+                                // 外部の不完全なzipへの依存をなくし、Wasm自身の内部ファイルシステム上に直接展開
                                 FS.mkdirTree('/home/wineuser');
                                 FS.writeFile('/home/wineuser/app.exe', exeUint8Array);
                                 console.log("ユーザーバイナリのマウント成功");
@@ -96,13 +79,13 @@
                         }
                     }],
                     onRuntimeInitialized: function() {
-                        document.getElementById('status').innerText = "アプリケーションが正常にネイティブ起動しました！";
+                        document.getElementById('status').innerText = "アプリケーションが正常に起動しました！";
                     },
                     print: console.log,
                     printErr: console.error
                 };
 
-                // 6. 全てのお膳立てが完了したこの瞬間に、満を持してコアJSをロード！
+                // 5. お膳立てが完了したこの瞬間に、満を持してコアJSをロード！
                 document.getElementById('status').innerText = "Wasmカーネルをキック中（爆速ネイティブ実行）...";
                 const script = document.createElement('script');
                 script.src = baseUrl + targetDir + "/boxedwine.js";
