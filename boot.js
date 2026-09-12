@@ -1,6 +1,6 @@
-// boot.js - about:blank の中身を自動で書き換えてシステムを起動するJS
-export function startup() {
-    console.log("Web EXE ランナーをローカル展開中...");
+// boot.js - インポートされた瞬間に自動でabout:blankを書き換えて起動する
+(async () => {
+    console.log("Web EXE ランナーをローカル展開中（即時自動起動）...");
     
     const baseUrl = "https://a728238.github.io/w/";
     const cpuCores = navigator.hardwareConcurrency || 1;
@@ -14,7 +14,7 @@ export function startup() {
         modeText = `マルチスレッド（高速モード: ${cpuCores}コア）`;
     }
 
-    // 1. about:blank のDOM（画面）を完全に上書き
+    // 1. about:blank の画面（DOM）を強制的に書き換え
     document.open();
     document.write(`
         <!DOCTYPE html>
@@ -59,8 +59,14 @@ export function startup() {
     dropZone.addEventListener('dragover', (e) => e.preventDefault());
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
-        const file = e.dataTransfer.files[0];
-        if (file && file.name.endsWith('.exe')) {
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            const file = files[0];
+            if (!file.name.endsWith('.exe')) {
+                alert('Windowsの実行ファイル (.exe) を選択してください。');
+                return;
+            }
+
             document.getElementById('status').innerText = `${file.name} を解析中（爆速ネイティブ実行）...`;
             dropZone.style.display = 'none';
             document.getElementById('canvas-container').style.display = 'block';
@@ -85,4 +91,4 @@ export function startup() {
     script.src = `${baseUrl}${targetDir}/boxedwine.js`;
     script.async = true;
     document.body.appendChild(script);
-}
+})();
