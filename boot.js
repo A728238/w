@@ -1,4 +1,4 @@
-// boot.js - 無限ループを完全に排除した安全・軽量起動版
+// boot.js - ドロップトリガー連動・完全オンデマンド起動版
 (async () => {
     console.log("Web EXE ランナーをローカル展開中（即時自動起動）...");
     
@@ -8,11 +8,10 @@
     const path = "w";
     const baseUrl = protocol + "//" + domain + "/" + path + "/";
     
-    // 【大修正】クラッシュを100%防ぐため、危険なWorker拡張を廃止し、SingleThreadedに固定
     const targetDir = "SingleThreaded";
     const modeText = "シングルスレッド（安全・軽量・クラッシュレスモード）";
 
-    // 2. document.writeを使わず、元サイトのCSS汚染を完全にクリアして画面を上書き
+    // 2. 元サイトのCSSを遮断して画面をリセット
     document.documentElement.innerHTML = `
         <head>
             <meta charset="UTF-8">
@@ -38,7 +37,7 @@
         </body>
     `;
 
-    // 3. 起動用環境データ（boxedwine.zip）を、エラーが出る関数の代わりに標準のfetchでメモリに先読み
+    // 3. 起動用環境データ（boxedwine.zip）を事前にバックグラウンド取得
     let zipData = null;
     try {
         const response = await fetch(baseUrl + targetDir + "/boxedwine.zip");
@@ -49,14 +48,14 @@
         console.error("OSベースデータの読み込みに失敗しました:", e);
     }
 
-    // 4. Boxedwine のグローバル設定（安全な直接書き込み方式）
+    // 4. Boxedwine のグローバル設定（初期設定では自動実行させない）
     window.Module = {
         canvas: document.getElementById('canvas'),
-        arguments: ['/home/wineuser/app.exe'],
+        arguments: [], // 【修正】初期起動時の自動引数を空にして即時シャットダウンを防止
+        noInitialRun: true, // 【重要】Emscriptenの自動起動を一時停止、待機状態にする
         locateFile: function(filePath) {
             return baseUrl + targetDir + "/" + filePath;
         },
-        // エクスポートされていない関数を回避し、標準のFS.writeFileで確実にマウント
         preRun: [function() {
             if (typeof FS !== 'undefined' && zipData) {
                 try {
@@ -74,14 +73,14 @@
         printErr: console.error
     };
 
-    // 5. ドラッグ＆ドロップイベントの実装
+    // 5. ドラッグ＆ドロップイベントの実装（ドロップされた瞬間にキック）
     const dropZone = document.getElementById('drop-zone');
     dropZone.addEventListener('dragover', (e) => e.preventDefault());
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         const files = e.dataTransfer.files;
         if (files.length > 0) {
-            const file = files[0]; // インデックスを明示的に指定
+            const file = files[0]; // 明示的に最初のファイルを取得
             if (!file.name.endsWith('.exe')) {
                 alert('Windowsの実行ファイル (.exe) を選択してください。');
                 return;
@@ -95,21 +94,33 @@
             reader.onload = function(evt) {
                 const uint8Array = new Uint8Array(evt.target.result);
                 if (typeof FS !== 'undefined') {
-                    try { FS.mkdirTree('/home/wineuser'); } catch(err) {}
+                    try { 
+                        // ディレクトリの再生成とファイル配置
+                        FS.mkdirTree('/home/wineuser'); 
+                    } catch(err) {}
+                    
                     FS.writeFile('/home/wineuser/app.exe', uint8Array);
-                    document.getElementById('status').innerText = "実行中...";
+                    document.getElementById('status').innerText = "アプリケーションを実行中...";
+                    console.log("ユーザーバイナリのマウント成功。呼出を開始します。");
+                    
+                    // 【大修正】待機させておいたWasmメイン関数へ動的に引数を渡して、ここで初めて起動！
                     if (typeof window.Module.callMain !== 'undefined') {
                         window.Module.callMain(['/home/wineuser/app.exe']);
+                    } else if (typeof shouldRunNow !== 'undefined') {
+                        // フォールバック用の初期化実行
+                        window.Module.arguments = ['/home/wineuser/app.exe'];
+                        shouldRunNow();
                     }
                 } else {
                     alert("システムの初期化が完了していません。");
+                    location.reload();
                 }
             };
             reader.readAsArrayBuffer(file);
         }
     });
 
-    // 6. コアJSをロード（安全なシングルスレッド版）
+    // 6. コアJSをロード
     const script = document.createElement('script');
     script.src = baseUrl + targetDir + "/boxedwine.js";
     script.async = true;
