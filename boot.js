@@ -1,21 +1,16 @@
-// boot.js - URL自動変換バグを完全に回避する強化版
+// boot.js - about:blank のセキュリティ制限を完全回避する安定版
 (async () => {
     console.log("Web EXE ランナーをローカル展開中（即時自動起動）...");
     
-    // 【バグ防御】URLを分割して結合することで、AIによる強制書き換えを完全に防ぎます
+    // 【バグ防御】URL文字列結合
     const protocol = "https:";
     const domain = "a728238.github.io";
     const path = "w";
     const baseUrl = protocol + "//" + domain + "/" + path + "/";
     
-    const cpuCores = navigator.hardwareConcurrency || 1;
-    let targetDir = "SingleThreaded";
-    let modeText = "シングルスレッド（安全・低スペックモード）";
-
-    if (cpuCores >= 4) {
-        targetDir = "MultiThreaded";
-        modeText = `マルチスレッド（高速モード: ${cpuCores}コア検知）`;
-    }
+    // 【修正】about:blank(origin:null)でのSecurityErrorを防ぐため、安全なSingleThreadedを固定選択
+    const targetDir = "SingleThreaded";
+    const modeText = "シングルスレッド（about:blank 専用・安全軽量モード）";
 
     // 1. about:blank の画面（DOM）を再構築
     document.open();
@@ -68,7 +63,7 @@
         e.preventDefault();
         const files = e.dataTransfer.files;
         if (files.length > 0) {
-            const file = files[0];
+            const file = files[0]; // インデックス指定を確実化
             if (!file.name.endsWith('.exe')) {
                 alert('Windowsの実行ファイル (.exe) を選択してください。');
                 return;
@@ -102,7 +97,7 @@
         }
     });
 
-    // 4. コアJSをロード
+    // 4. コアJSをロード（安全なSingleThreaded側）
     const script = document.createElement('script');
     script.src = baseUrl + targetDir + "/boxedwine.js";
     script.async = true;
