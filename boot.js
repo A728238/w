@@ -35,7 +35,17 @@
         </body>
     `;
 
-    // 2. ドラッグ＆ドロップイベントの実装
+    // 2. 【超重要】起動用環境データ（boxedwine.zip）を、この時点で絶対に「先行ダウンロード」しておく
+    let zipArrayBuffer = null;
+    try {
+        const response = await fetch(baseUrl + targetDir + "/boxedwine.zip");
+        zipArrayBuffer = await response.arrayBuffer();
+        console.log("OSベースデータの先行フェッチに成功しました");
+    } catch (e) {
+        console.error("OSベースデータの読み込み失敗:", e);
+    }
+
+    // 3. ドラッグ＆ドロップイベントの実装
     const dropZone = document.getElementById('drop-zone');
     dropZone.addEventListener('dragover', (e) => e.preventDefault());
     dropZone.addEventListener('drop', (e) => {
@@ -57,18 +67,17 @@
                 const exeUint8Array = new Uint8Array(evt.target.result);
                 console.log("ユーザーバイナリのメモリロード成功");
 
-                // 3. 【大修正】Emscripten標準のプリロード機能（FS_createPreloadedFileの代わりの公式仕様）を定義
+                // 4. Boxedwine の環境変数を定義
                 window.Module = {
                     canvas: document.getElementById('canvas'),
-                    arguments: ['/home/wineuser/app.exe'], // 実行コマンドを指定
+                    arguments: ['/home/wineuser/app.exe'], // 実行対象を指定
                     locateFile: function(filePath) {
                         return baseUrl + targetDir + "/" + filePath;
                     },
-                    // Wasm起動前の仮想ファイルシステム初期化フェーズに割り込んで確実に配置
+                    // Wasm起動直前にユーザーの .exe をファイルシステムにねじ込む
                     preRun: [function() {
                         if (typeof FS !== 'undefined') {
                             try {
-                                // ユーザーの.exeを配置
                                 FS.mkdirTree('/home/wineuser');
                                 FS.writeFile('/home/wineuser/app.exe', exeUint8Array);
                                 console.log("ユーザーバイナリのマウント成功");
@@ -77,12 +86,6 @@
                             }
                         }
                     }],
-                    // 【超重要】外部の zip ファイルをEmscriptenに「起動前ファイル」として自動フェッチ・認識させる公式設定
-                    filePackageDependencies: [{
-                        "filename": "boxedwine.zip",
-                        "remote_package_size": 12000000, // 概算サイズ
-                        "package_uuid": "boxedwine-filesystem"
-                    }],
                     onRuntimeInitialized: function() {
                         document.getElementById('status').innerText = "アプリケーションが正常に起動しました！";
                     },
@@ -90,14 +93,32 @@
                     printErr: console.error
                 };
 
-                // 【超重要】Emscriptenが内部で自動実行するダウンロード＆プリロード用関数をグローバルに代入
-                window.Module['getPreloadedPackage'] = function(remotePackageName, remotePackageSize) {
-                    console.log("Emscriptenコアが環境データを要求しました: " + remotePackageName);
-                    // GitHub Pages上のクリーンなzipファイルを直接Wasmカーネルの口に流し込む
-                    return baseUrl + targetDir + "/boxedwine.zip";
+                // 5. 【大ブレイクスルー】boxedwine.jsが内部で行う「XHRダウンロード（通信）」を完全にジャック
+                // 外部にファイルを呼びに行かせず、先ほどダウンロードした zipData を強制的に直接握らせます
+                const originalXHR = window.XMLHttpRequest;
+                window.XMLHttpRequest = function() {
+                    const xhr = new originalXHR();
+                    const originalOpen = xhr.open;
+                    xhr.open = function(method, url) {
+                        // boxedwine.zip を要求された場合、通信をストップしてメモリから即時返却
+                        if (url.includes("boxedwine.zip")) {
+                            Object.defineProperty(xhr, 'response', { writable: true, value: zipArrayBuffer });
+                            Object.defineProperty(xhr, 'status', { writable: true, value: 200 });
+                            Object.defineProperty(xhr, 'readyState', { writable: true, value: 4 });
+                            setTimeout(() => {
+                                if (xhr.onload) xhr.onload();
+                                if (xhr.onreadystatechange) xhr.onreadystatechange();
+                            }, 1);
+                            // 実際のネットワーク通信を行わせないように open を空関数化
+                            xhr.send = function() {};
+                            return;
+                        }
+                        return originalOpen.apply(xhr, arguments);
+                    };
+                    return xhr;
                 };
 
-                // 4. お膳立てが100%完了したこの瞬間に、満を持してコアJSをロード！
+                // 6. 完璧な偽装網が完成したので、満を持してコアJSをロード！
                 document.getElementById('status').innerText = "Wasmカーネルをキック中（爆速ネイティブ実行）...";
                 const script = document.createElement('script');
                 script.src = baseUrl + targetDir + "/boxedwine.js";
