@@ -1,7 +1,6 @@
 (async () => {
     console.log("Web EXE ランナーをローカル展開中（最終決定版）...");
     
-    // 1. URL文字列の結合（AIによるURL自動書き換えバグを完全に防止）
     const protocol = "https:";
     const domain = "a728238.github.io";
     const path = "w";
@@ -10,7 +9,7 @@
     const targetDir = "SingleThreaded";
     const modeText = "シングルスレッド（安全・完全自己完結モード）";
 
-    // 2. 元サイトのCSSを完全に遮断し、画面をクリーンなUIにリセット
+    // 1. 元サイトのCSSを遮断し、画面をクリーンなUIにリセット
     document.documentElement.innerHTML = `
         <head>
             <meta charset="UTF-8">
@@ -36,7 +35,7 @@
         </body>
     `;
 
-    // 3. ドラッグ＆ドロップイベントの実装（ファイルが置かれた瞬間に初めてWasmのロードを開始）
+    // 2. ドラッグ＆ドロップイベントの実装
     const dropZone = document.getElementById('drop-zone');
     dropZone.addEventListener('dragover', (e) => e.preventDefault());
     dropZone.addEventListener('drop', (e) => {
@@ -58,18 +57,18 @@
                 const exeUint8Array = new Uint8Array(evt.target.result);
                 console.log("ユーザーバイナリのメモリロード成功");
 
-                // 4. ファイルが揃ったので、Boxedwineの環境変数を定義
+                // 3. 【大修正】Emscripten標準のプリロード機能（FS_createPreloadedFileの代わりの公式仕様）を定義
                 window.Module = {
                     canvas: document.getElementById('canvas'),
-                    arguments: ['/home/wineuser/app.exe'], // 実行対象を指定
+                    arguments: ['/home/wineuser/app.exe'], // 実行コマンドを指定
                     locateFile: function(filePath) {
                         return baseUrl + targetDir + "/" + filePath;
                     },
-                    // Wasm起動直前のフックで、ユーザーの.exeのみを直接マウント
+                    // Wasm起動前の仮想ファイルシステム初期化フェーズに割り込んで確実に配置
                     preRun: [function() {
                         if (typeof FS !== 'undefined') {
                             try {
-                                // 外部の不完全なzipへの依存をなくし、Wasm自身の内部ファイルシステム上に直接展開
+                                // ユーザーの.exeを配置
                                 FS.mkdirTree('/home/wineuser');
                                 FS.writeFile('/home/wineuser/app.exe', exeUint8Array);
                                 console.log("ユーザーバイナリのマウント成功");
@@ -78,6 +77,12 @@
                             }
                         }
                     }],
+                    // 【超重要】外部の zip ファイルをEmscriptenに「起動前ファイル」として自動フェッチ・認識させる公式設定
+                    filePackageDependencies: [{
+                        "filename": "boxedwine.zip",
+                        "remote_package_size": 12000000, // 概算サイズ
+                        "package_uuid": "boxedwine-filesystem"
+                    }],
                     onRuntimeInitialized: function() {
                         document.getElementById('status').innerText = "アプリケーションが正常に起動しました！";
                     },
@@ -85,7 +90,14 @@
                     printErr: console.error
                 };
 
-                // 5. お膳立てが完了したこの瞬間に、満を持してコアJSをロード！
+                // 【超重要】Emscriptenが内部で自動実行するダウンロード＆プリロード用関数をグローバルに代入
+                window.Module['getPreloadedPackage'] = function(remotePackageName, remotePackageSize) {
+                    console.log("Emscriptenコアが環境データを要求しました: " + remotePackageName);
+                    // GitHub Pages上のクリーンなzipファイルを直接Wasmカーネルの口に流し込む
+                    return baseUrl + targetDir + "/boxedwine.zip";
+                };
+
+                // 4. お膳立てが100%完了したこの瞬間に、満を持してコアJSをロード！
                 document.getElementById('status').innerText = "Wasmカーネルをキック中（爆速ネイティブ実行）...";
                 const script = document.createElement('script');
                 script.src = baseUrl + targetDir + "/boxedwine.js";
