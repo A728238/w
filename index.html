@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web EXE Runner (Auto-Thread Selector)</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 { color: #333; margin-bottom: 5px; }
+        p { color: #666; margin-top: 0; font-size: 14px; }
+        
+        #drop-zone {
+            width: 80%;
+            max-width: 600px;
+            height: 150px;
+            border: 3px dashed #4a90e2;
+            border-radius: 10px;
+            background-color: #fff;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        #drop-zone.dragover { background-color: #e1f0ff; }
+        #drop-zone p { font-size: 16px; font-weight: bold; color: #4a90e2; }
+
+        #canvas-container { display: none; box-shadow: 0 4px 15px rgba(0,0,0,0.2); background: #000; }
+        canvas { display: block; }
+        #status { color: #e67e22; font-weight: bold; margin-bottom: 5px; }
+        #mode-info { color: #7f8c8d; font-size: 12px; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+
+    <h1>Web EXE ランナー</h1>
+    <p>Windowsアプリ (.exe) を環境に合わせて最適速度で実行します（サーバー通信なし）</p>
+
+    <div id="status">環境チェック中...</div>
+    <div id="mode-info">判定中...</div>
+
+    <div id="drop-zone" id="drop-zone">
+        <p>ここにWindowsの「.exeファイル」をドロップ</p>
+        <span style="font-size: 12px; color: #999;">またはクリックしてファイルを選択</span>
+        <input type="file" id="file-input" accept=".exe" style="display: none;">
+    </div>
+
+    <div id="canvas-container" id="canvas-container">
+        <canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const statusText = document.getElementById('status');
+        const modeInfo = document.getElementById('mode-info');
+        const canvasContainer = document.getElementById('canvas-container');
+
+        // 1. スペックおよびブラウザのセキュリティ（スレッド対応）判定
+        const cpuCores = navigator.hardwareConcurrency || 1;
+        // マルチスレッドWasmには「SharedArrayBuffer」が必要
+        const supportsThreads = (typeof SharedArrayBuffer !== 'undefined'); 
+        
+        let targetDirectory = "SingleThreaded";
+        let executionMode = "シングルスレッド（安全・低スペック向けモード）";
+
+        // 4コア以上かつブラウザがマルチスレッドに対応している場合、爆速モードを選択
+        if (cpuCores >= 4 && supportsThreads) {
+            targetDirectory = "MultiThreaded";
+            executionMode = `マルチスレッド（高速モード: ${cpuCores}コア検知）`;
+        }
+
+        modeInfo.innerText = `現在の動作モード: ${executionMode}`;
+
+        // 2. Boxedwine設定オブジェクト
+        var Module = {
+            canvas: document.getElementById('canvas'),
+            // 動的に切り替えたディレクトリから各アセットを読み込むようにマッピング
+            locateFile: function(path) {
+                return targetDirectory + "/" + path;
+            },
+            onRuntimeInitialized: function() {
+                statusText.innerText = "準備完了！.exeファイルを読み込んでください。";
+            },
+            print: function(text) { console.log(text); },
+            printErr: function(text) { console.error(text); }
+        };
+
+        // 3. ファイル入力イベント処理
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('dragover'); });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+        });
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => { if (e.target.files.length > 0) handleFile(e.target.files[0]); });
+
+        function handleFile(file) {
+            if (!file.name.endsWith('.exe')) {
+                alert('Windowsの実行ファイル (.exe) を選択してください。');
+                return;
+            }
+
+            statusText.innerText = `${file.name} をメモリにロード中...`;
+            dropZone.style.display = 'none';
+            canvasContainer.style.display = 'block';
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const uint8Array = new Uint8Array(e.target.result);
+
+                if (typeof FS !== 'undefined') {
+                    // 仮想ファイルシステム上に一時保存
+                    FS.writeFile('/home/wineuser/app.exe', uint8Array);
+                    statusText.innerText = "アプリを起動しています...";
+                    
+                    // インジェクションしたプログラムを実行
+                    Module.callMain(['/home/wineuser/app.exe']);
+                    statusText.innerText = "実行中";
+                } else {
+                    statusText.innerText = "エラー: ランタイム初期化未完了。リロードしてください。";
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // 4. 判定したディレクトリ側のコアスクリプトを動的にインジェクション（ロード）
+        const script = document.createElement('script');
+        script.src = targetDirectory + "/boxedwine.js";
+        script.async = true;
+        document.body.appendChild(script);
+    </script>
+</body>
+</html>
