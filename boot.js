@@ -9,7 +9,7 @@
     const targetDir = "SingleThreaded";
     const modeText = "シングルスレッド（安全・完全自己完結モード）";
 
-    // 1. 元サイトのCSSを遮断し、画面をクリーンなUIにリセット
+    // 1. 元サイトのCSSを完全に遮断し、画面をクリーンなUIにリセット
     document.documentElement.innerHTML = `
         <head>
             <meta charset="UTF-8">
@@ -35,7 +35,7 @@
         </body>
     `;
 
-    // 2. 【超重要】起動用環境データ（boxedwine.zip）を、この時点で絶対に「先行ダウンロード」しておく
+    // 2. 起動用環境データ（boxedwine.zip）を先行ダウンロードしてメモリに完全保持
     let zipArrayBuffer = null;
     try {
         const response = await fetch(baseUrl + targetDir + "/boxedwine.zip");
@@ -74,7 +74,6 @@
                     locateFile: function(filePath) {
                         return baseUrl + targetDir + "/" + filePath;
                     },
-                    // Wasm起動直前にユーザーの .exe をファイルシステムにねじ込む
                     preRun: [function() {
                         if (typeof FS !== 'undefined') {
                             try {
@@ -93,15 +92,30 @@
                     printErr: console.error
                 };
 
-                // 5. 【大ブレイクスルー】boxedwine.jsが内部で行う「XHRダウンロード（通信）」を完全にジャック
-                // 外部にファイルを呼びに行かせず、先ほどダウンロードした zipData を強制的に直接握らせます
+                // 5. 【大ブレイクスルー】ブラウザのすべての通信網（fetch と XMLHttpRequest）を完全に同時ジャック
+                // ① fetch() のジャック
+                const originalFetch = window.fetch;
+                window.fetch = async function(input, init) {
+                    const url = typeof input === 'string' ? input : input.url;
+                    if (url && url.includes("boxedwine.zip")) {
+                        console.log("ジャック成功: fetch() 要求に直接メモリからデータを返却します");
+                        return new Response(zipArrayBuffer, {
+                            status: 200,
+                            statusText: "OK",
+                            headers: { 'Content-Type': 'application/zip' }
+                        });
+                    }
+                    return originalFetch.apply(this, arguments);
+                };
+
+                // ② XMLHttpRequest のジャック
                 const originalXHR = window.XMLHttpRequest;
                 window.XMLHttpRequest = function() {
                     const xhr = new originalXHR();
                     const originalOpen = xhr.open;
                     xhr.open = function(method, url) {
-                        // boxedwine.zip を要求された場合、通信をストップしてメモリから即時返却
-                        if (url.includes("boxedwine.zip")) {
+                        if (url && url.includes("boxedwine.zip")) {
+                            console.log("ジャック成功: XMLHttpRequest 要求に直接メモリからデータを返却します");
                             Object.defineProperty(xhr, 'response', { writable: true, value: zipArrayBuffer });
                             Object.defineProperty(xhr, 'status', { writable: true, value: 200 });
                             Object.defineProperty(xhr, 'readyState', { writable: true, value: 4 });
@@ -109,7 +123,6 @@
                                 if (xhr.onload) xhr.onload();
                                 if (xhr.onreadystatechange) xhr.onreadystatechange();
                             }, 1);
-                            // 実際のネットワーク通信を行わせないように open を空関数化
                             xhr.send = function() {};
                             return;
                         }
@@ -118,7 +131,7 @@
                     return xhr;
                 };
 
-                // 6. 完璧な偽装網が完成したので、満を持してコアJSをロード！
+                // 6. コアJSをロード
                 document.getElementById('status').innerText = "Wasmカーネルをキック中（爆速ネイティブ実行）...";
                 const script = document.createElement('script');
                 script.src = baseUrl + targetDir + "/boxedwine.js";
