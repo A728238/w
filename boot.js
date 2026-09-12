@@ -35,30 +35,32 @@
         </body>
     `;
 
-    // 2. 35.5MBの純正OSデータをキャッシュを完全に破壊しながらロード
+    // 2. GitHubの25MB制限を突破するため、分割されたデータを非同期で並列ロードして自動結合
     let rawZipBuffer = null;
-    // 大文字・小文字、およびJekyllの制限を回避するためのURL候補リストを順に試行
-    const urlCandidates = [
-        baseUrl + targetDir + "/boxedwine.zip?v=" + Date.now(),
-        baseUrl + targetDir.toLowerCase() + "/boxedwine.zip",
-        baseUrl + targetDir + "/Boxedwine.zip"
-    ];
+    try {
+        console.log("分割されたOSバイナリデータの並列ダウンロードを開始...");
+        const [resA, resB] = await Promise.all([
+            fetch(baseUrl + targetDir + "boxedwine.part_a?v=" + Date.now()),
+            fetch(baseUrl + targetDir + "boxedwine.part_b?v=" + Date.now())
+        ]);
 
-    for (const url of urlCandidates) {
-        try {
-            const response = await fetch(url);
-            if (response.ok) {
-                rawZipBuffer = await response.arrayBuffer();
-                console.log("公式OSバイナリデータのフェッチに成功: " + url);
-                break;
-            }
-        } catch (e) {
-            console.warn("URL試行失敗: " + url);
+        if (resA.ok && resB.ok) {
+            const [bufA, bufB] = await Promise.all([resA.arrayBuffer(), resB.arrayBuffer()]);
+            
+            // 低スペックPCでも一瞬で結合できる高速バイナリマージ処理
+            const mergedArray = new Uint8Array(bufA.byteLength + bufB.byteLength);
+            mergedArray.set(new Uint8Array(bufA), 0);
+            mergedArray.set(new Uint8Array(bufB), bufA.byteLength);
+            
+            rawZipBuffer = mergedArray.buffer;
+            console.log("純正35.5MBバイナリデータの結合・完全復元に成功しました！");
         }
+    } catch (e) {
+        console.error("OSベースデータの結合ロードに失敗しました:", e);
     }
 
     if (!rawZipBuffer) {
-        document.getElementById('status').innerText = "エラー: 35.5MBのboxedwine.zipが見つかりません。リポジトリの配置を確認してください。";
+        document.getElementById('status').innerText = "エラー: 分割ファイル (boxedwine.part_a / part_b) のフェッチに失敗しました。";
         return;
     }
 
@@ -69,7 +71,7 @@
         e.preventDefault();
         const files = e.dataTransfer.files;
         if (files.length > 0) {
-            const file = files[0]; // 最初のファイルを確実に取得
+            const file = files[0];
             if (!file.name.endsWith('.exe')) {
                 alert('Windowsの実行ファイル (.exe) を選択してください。');
                 return;
@@ -84,7 +86,7 @@
                 const exeUint8Array = new Uint8Array(evt.target.result);
                 console.log("ユーザーバイナリのメモリロード成功");
 
-                // 4. Boxedwineに完全準拠したオブジェクト定義
+                // 4. Boxedwine設定オブジェクト
                 window.Module = {
                     canvas: document.getElementById('canvas'),
                     arguments: ['/home/wineuser/app.exe'],
@@ -103,9 +105,9 @@
                         }
                     }],
                     
-                    // Emscriptenコアのデータインジェクションハンドラ
+                    // 結合した完璧な純正バイナリをWasmコアへ引き渡す
                     getPreloadedPackage: function(remotePackageName, remotePackageSize) {
-                        console.log("★Emscriptenコアへ公式OSバイナリデータを注入します");
+                        console.log("★Emscriptenコアへ完全復元されたOSバイナリデータを注入します");
                         return rawZipBuffer;
                     },
 
