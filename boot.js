@@ -9,7 +9,7 @@
     const targetDir = "SingleThreaded";
     const modeText = "シングルスレッド（安全・完全自己完結モード）";
 
-    // 1. 元サイトのCSSを完全に遮断し、画面をクリーンなUIにリセット
+    // 1. 画面のUIリセット
     document.documentElement.innerHTML = `
         <head>
             <meta charset="UTF-8">
@@ -35,17 +35,17 @@
         </body>
     `;
 
-    // 2. 起動用環境データ（boxedwine.zip）をあらかじめ超高速で先行ダウンロードしてメモリに完全保持
-    let zipArrayBuffer = null;
+    // 2. 公式リポジトリの SingleThreaded/boxedwine.zip を「生のまま」メモリに先行ロード
+    let rawZipBuffer = null;
     try {
         const response = await fetch(baseUrl + targetDir + "/boxedwine.zip");
-        zipArrayBuffer = await response.arrayBuffer();
-        console.log("OSベースデータの先行フェッチに成功しました");
+        rawZipBuffer = await response.arrayBuffer();
+        console.log("公式OSバイナリデータの先行フェッチに成功しました");
     } catch (e) {
         console.error("OSベースデータの読み込み失敗:", e);
     }
 
-    // 3. ドラッグ＆ドロップイベントの実装
+    // 3. ドラッグ＆ドロップイベント
     const dropZone = document.getElementById('drop-zone');
     dropZone.addEventListener('dragover', (e) => e.preventDefault());
     dropZone.addEventListener('drop', (e) => {
@@ -67,10 +67,10 @@
                 const exeUint8Array = new Uint8Array(evt.target.result);
                 console.log("ユーザーバイナリのメモリロード成功");
 
-                // 4. 【決定打】現代のEmscripten公式仕様のみに基づいたオブジェクト定義
+                // 4. Boxedwine / Emscriptenに完全準拠したオブジェクト定義
                 window.Module = {
                     canvas: document.getElementById('canvas'),
-                    arguments: ['/home/wineuser/app.exe'], // 実行対象
+                    arguments: ['/home/wineuser/app.exe'],
                     locateFile: function(filePath) {
                         return baseUrl + targetDir + "/" + filePath;
                     },
@@ -86,11 +86,11 @@
                         }
                     }],
                     
-                    // 【公式仕様】Wasmカーネルが「パッケージデータ」を要求した際、外部通信を完全に遮断し、
-                    // 先読みしておいたzipデータの複製（ArrayBuffer）をそのまま直接引き渡す最高にクリーンなハンドラ
+                    // 【大ブレイクスルー】Emscriptenが内部で自動実行するファイルパッケージ（.data仕様のzip）の
+                    // 取得処理を直接ジャック。公式から取得した生のArrayBufferをそのままWasmのメモリ領域へダイレクト注入します
                     getPreloadedPackage: function(remotePackageName, remotePackageSize) {
-                        console.log("Emscriptenコアへメモリ内のOSデータを直接注入します");
-                        return zipArrayBuffer.slice(0);
+                        console.log("★Emscriptenコアへ公式OSバイナリデータを注入します");
+                        return rawZipBuffer;
                     },
 
                     onRuntimeInitialized: function() {
@@ -100,7 +100,7 @@
                     printErr: console.error
                 };
 
-                // 5. すべての準備が完了したので、満を持してコアJSをロード！
+                // 5. コアJS（手元の未加工のboxedwine.js）をロード
                 document.getElementById('status').innerText = "Wasmカーネルをキック中（爆速ネイティブ実行）...";
                 const script = document.createElement('script');
                 script.src = baseUrl + targetDir + "/boxedwine.js";
