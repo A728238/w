@@ -1,4 +1,4 @@
-// boot.js - ドロップトリガー連動・完全オンデマンド起動版
+// boot.js - 非公開関数エラーを完全回避するジャストインタイムロード版
 (async () => {
     console.log("Web EXE ランナーをローカル展開中（即時自動起動）...");
     
@@ -11,7 +11,7 @@
     const targetDir = "SingleThreaded";
     const modeText = "シングルスレッド（安全・軽量・クラッシュレスモード）";
 
-    // 2. 元サイトのCSSを遮断して画面をリセット
+    // 2. 元サイトのCSSを完全に遮断して画面をUIリセット
     document.documentElement.innerHTML = `
         <head>
             <meta charset="UTF-8">
@@ -31,13 +31,13 @@
         <body>
             <h1>Web EXE ランナー (ネイティブ起動版)</h1>
             <div id="mode-info">動作モード: ${modeText}</div>
-            <div id="status">システム環境（Wasm OS）を構築中...</div>
+            <div id="status">【スタンバイ完了】下にWindowsアプリ (.exe) をドロップしてください。</div>
             <div id="drop-zone">ここに Windows の .exe ファイルをドロップ</div>
             <div id="canvas-container"><canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas></div>
         </body>
     `;
 
-    // 3. 起動用環境データ（boxedwine.zip）を事前にバックグラウンド取得
+    // 3. 起動用OS環境データ（boxedwine.zip）をあらかじめ超高速でバックグラウンドフェッチ
     let zipData = null;
     try {
         const response = await fetch(baseUrl + targetDir + "/boxedwine.zip");
@@ -48,81 +48,68 @@
         console.error("OSベースデータの読み込みに失敗しました:", e);
     }
 
-    // 4. Boxedwine のグローバル設定（初期設定では自動実行させない）
-    window.Module = {
-        canvas: document.getElementById('canvas'),
-        arguments: [], // 【修正】初期起動時の自動引数を空にして即時シャットダウンを防止
-        noInitialRun: true, // 【重要】Emscriptenの自動起動を一時停止、待機状態にする
-        locateFile: function(filePath) {
-            return baseUrl + targetDir + "/" + filePath;
-        },
-        preRun: [function() {
-            if (typeof FS !== 'undefined' && zipData) {
-                try {
-                    FS.writeFile('boxedwine.zip', zipData);
-                    console.log("仮想ファイルシステムへ環境をインジェクションしました");
-                } catch(e) {
-                    console.error("FSへの書き込みエラー:", e);
-                }
-            }
-        }],
-        onRuntimeInitialized: function() {
-            document.getElementById('status').innerText = "準備完了！.exeファイルを読み込んでください。";
-        },
-        print: console.log,
-        printErr: console.error
-    };
-
-    // 5. ドラッグ＆ドロップイベントの実装（ドロップされた瞬間にキック）
+    // 4. ドラッグ＆ドロップイベントの実装（ファイルが置かれた瞬間に初めてWasmのロードを開始）
     const dropZone = document.getElementById('drop-zone');
     dropZone.addEventListener('dragover', (e) => e.preventDefault());
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         const files = e.dataTransfer.files;
         if (files.length > 0) {
-            const file = files[0]; // 明示的に最初のファイルを取得
+            const file = files[0]; // 最初のファイルを確実に取得
             if (!file.name.endsWith('.exe')) {
                 alert('Windowsの実行ファイル (.exe) を選択してください。');
                 return;
             }
 
-            document.getElementById('status').innerText = `${file.name} を解析中（爆速ネイティブ実行）...`;
+            document.getElementById('status').innerText = `${file.name} をシステムへインジェクション中...`;
             dropZone.style.display = 'none';
             document.getElementById('canvas-container').style.display = 'block';
 
             const reader = new FileReader();
             reader.onload = function(evt) {
-                const uint8Array = new Uint8Array(evt.target.result);
-                if (typeof FS !== 'undefined') {
-                    try { 
-                        // ディレクトリの再生成とファイル配置
-                        FS.mkdirTree('/home/wineuser'); 
-                    } catch(err) {}
-                    
-                    FS.writeFile('/home/wineuser/app.exe', uint8Array);
-                    document.getElementById('status').innerText = "アプリケーションを実行中...";
-                    console.log("ユーザーバイナリのマウント成功。呼出を開始します。");
-                    
-                    // 【大修正】待機させておいたWasmメイン関数へ動的に引数を渡して、ここで初めて起動！
-                    if (typeof window.Module.callMain !== 'undefined') {
-                        window.Module.callMain(['/home/wineuser/app.exe']);
-                    } else if (typeof shouldRunNow !== 'undefined') {
-                        // フォールバック用の初期化実行
-                        window.Module.arguments = ['/home/wineuser/app.exe'];
-                        shouldRunNow();
-                    }
-                } else {
-                    alert("システムの初期化が完了していません。");
-                    location.reload();
-                }
+                const exeUint8Array = new Uint8Array(evt.target.result);
+                console.log("ユーザーバイナリのメモリロード成功");
+
+                // 5. 【大修正】ファイルが揃ったので、ここで初めてBoxedwineの環境変数を定義（noInitialRunは使わない）
+                window.Module = {
+                    canvas: document.getElementById('canvas'),
+                    arguments: ['/home/wineuser/app.exe'], // 実行対象をあらかじめセット
+                    locateFile: function(filePath) {
+                        return baseUrl + targetDir + "/" + filePath;
+                    },
+                    // Wasm起動直前のフックで、用意した2つのデータを仮想FSへ一気に叩き込む
+                    preRun: [function() {
+                        if (typeof FS !== 'undefined') {
+                            try {
+                                // 1. ベースのWindows環境をインジェクション
+                                if (zipData) {
+                                    FS.writeFile('boxedwine.zip', zipData);
+                                    console.log("仮想ファイルシステムへ環境をインジェクションしました");
+                                }
+                                // 2. ユーザーの.exeをインジェクション
+                                FS.mkdirTree('/home/wineuser');
+                                FS.writeFile('/home/wineuser/app.exe', exeUint8Array);
+                                console.log("ユーザーバイナリのマウント成功");
+                            } catch(e) {
+                                console.error("FSマウントエラー:", e);
+                            }
+                        }
+                    }],
+                    onRuntimeInitialized: function() {
+                        document.getElementById('status').innerText = "アプリケーションが正常にネイティブ起動しました！";
+                    },
+                    print: console.log,
+                    printErr: console.error
+                };
+
+                // 6. 全てのお膳立てが完了したこの瞬間に、満を持してコアJSをロード！
+                document.getElementById('status').innerText = "Wasmカーネルをキック中（爆速ネイティブ実行）...";
+                const script = document.createElement('script');
+                script.src = baseUrl + targetDir + "/boxedwine.js";
+                script.async = true;
+                document.body.appendChild(script);
             };
             reader.readAsArrayBuffer(file);
         }
     });
-
-    // 6. コアJSをロード
-    const script = document.createElement('script');
-    script.src = baseUrl + targetDir + "/boxedwine.js";
-    script.async = true;
-    document.body.appendChild(script);
 })();
